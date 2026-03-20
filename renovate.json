@@ -1,0 +1,43 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "regexManagers": [
+    {
+      "fileMatch": [
+        "^bin/MI/get_linux_mi\\.py$",
+        "^bin/get_dvd_mediainfo_docker\\.py$"
+      ],
+      "matchStrings": [
+        "MEDIAINFO_VERSION = \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "MediaArea/MediaInfo",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v?(?<version>.+)$"
+    },
+    {
+      "fileMatch": [
+        "^bin/get_bdinfo\\.py$",
+        "^bin/get_bdinfo_docker\\.py$"
+      ],
+      "matchStrings": [
+        "BDINFO_VERSION = \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "Audionut/BDInfoCLI-ng",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v?(?<version>.+)$"
+    },
+    {
+      "fileMatch": [
+        "^bin/get_mkbrr\\.py$"
+      ],
+      "matchStrings": [
+        "MKBRR_VERSION = \"(?<currentValue>[^\"]+)\""
+      ],
+      "depNameTemplate": "autobrr/mkbrr",
+      "datasourceTemplate": "github-releases",
+      "extractVersionTemplate": "^v?(?<version>.+)$"
+    }
+  ]
+}

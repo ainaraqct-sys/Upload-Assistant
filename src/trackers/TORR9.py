@@ -1,0 +1,797 @@
+# Upload Assistant © 2025 Audionut & wastaken7 — Licensed under UAPL v1.0
+"""
+torr9.net — French private tracker (custom REST API)
+
+Upload endpoint:  POST https://api.torr9.net/api/v1/torrents/upload
+Authentication:   Bearer token
+Content-Type:     multipart/form-data
+
+Required fields:  torrent_file, title, description, nfo, category, subcategory
+Optional fields:  tags, is_exclusive, is_anonymous
+
+API docs reverse-engineered from:
+  https://codeberg.org/f4l5y/ntt/src/branch/main/docs/ntt-torr9up.md
+"""
+
+import asyncio
+import base64
+import contextlib
+import json
+import os
+import re
+from datetime import datetime
+from typing import Any, Optional, Union
+
+import aiofiles
+import httpx
+from unidecode import unidecode
+
+from src.console import console
+from src.nfo_generator import SceneNfoGenerator
+from src.tmdb import TmdbManager
+from src.trackers.COMMON import COMMON
+from src.trackers.FRENCH import FrenchTrackerMixin
+
+Meta = dict[str, Any]
+Config = dict[str, Any]
+
+FRENCH_MONTHS: list[str] = [
+    "",
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+]
+
+
+class TORR9(FrenchTrackerMixin):
+    """torr9.net tracker — French private tracker with custom REST API."""
+
+    LOGIN_URL: str = "https://api.torr9.net/api/v1/auth/login"
+
+    def __init__(self, config: Config) -> None:
+        self.config: Config = config
+        self.tracker: str = "TORR9"
+        self.source_flag: str = "TORR9"
+        self.upload_url: str = "https://api.torr9.net/api/v1/torrents/upload"
+        self.torrent_url: str = "https://torr9.net/torrents/"
+        tracker_cfg = self.config["TRACKERS"].get(self.tracker, {})
+        self.username: str = str(tracker_cfg.get("username", "")).strip()
+        self.password: str = str(tracker_cfg.get("password", "")).strip()
+        self.api_key: str = str(tracker_cfg.get("api_key", "")).strip()
+        self._bearer_token: str | None = None  # cached JWT from login
+        self.tmdb_manager = TmdbManager(config)
+        self.banned_groups: list[str] = [""]
+
+    # TORR9 accepts both French and English titles in release names;
+    # the original title is preferred.
+    PREFER_ORIGINAL_TITLE: bool = True
+
+    # ──────────────────────────────────────────────────────────
+    #  Authentication — login to obtain Bearer JWT
+    # ──────────────────────────────────────────────────────────
+
+    async def _login(self) -> Optional[str]:
+        """Authenticate via the login API and return a Bearer token.
+
+        POST https://api.torr9.net/api/v1/auth/login
+          Body: {"username": "...", "password": "...", "remember_me": true}
+          Response: {"token": "<jwt>", "user": {"passkey": "...", ...}}
+        """
+        if not self.username or not self.password:
+            return None
+
+        payload = {
+            "username": self.username,
+            "password": self.password,
+            "remember_me": True,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                resp = await client.post(
+                    self.LOGIN_URL,
+                    json=payload,
+                    headers={"Accept": "application/json", "Content-Type": "application/json"},
+                )
+
+            if resp.status_code in (200, 201):
+                data = resp.json()
+                token = data.get("token", "")
+                if token:
+                    return token
+                else:
+                    console.print("[red]TORR9: Login response missing token.[/red]")
+                    return None
+            else:
+                detail = ""
+                try:
+                    detail = resp.json()
+                except Exception:
+                    detail = resp.text[:300]
+                console.print(f"[red]TORR9: Login failed (HTTP {resp.status_code}): {detail}[/red]")
+                return None
+
+        except Exception as e:
+            console.print(f"[red]TORR9: Login error: {e}[/red]")
+            return None
+
+    async def _get_token(self) -> str:
+        """Return a valid Bearer token, logging in if necessary.
+
+        Priority:
+        1. Cached JWT from a previous _login() call
+        2. Fresh JWT via _login() (username/password)
+        3. Static api_key from config (fallback)
+        """
+        if self._bearer_token:
+            return self._bearer_token
+
+        if self.username and self.password:
+            token = await self._login()
+            if token:
+                self._bearer_token = token
+                return token
+            console.print("[yellow]TORR9: Login failed, falling back to api_key.[/yellow]")
+
+        return self.api_key
+
+    # ──────────────────────────────────────────────────────────
+    #  Audio / naming / French title — inherited from FrenchTrackerMixin
+    # ──────────────────────────────────────────────────────────
+
+    # ──────────────────────────────────────────────────────────
+    #  Category / Subcategory  (exact strings from the upload form)
+    #
+    #  Categories:   Films, Séries
+    #  Subcategories (Films):  Films, Films d'animation, Documentaires,
+    #                          Concert, Spectacle, Sport, Vidéo-clips
+    #  Subcategories (Séries): Séries TV, Emission TV, Séries Animées,
+    #                          Mangas-Animes
+    # ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _get_category(meta: Meta) -> tuple[str, str]:
+        """Return (category, subcategory) strings for the Torr9 upload form.
+
+        Values must match the exact labels shown on the site's upload page.
+        """
+        # Detect animation: anime flag, mal_id, or animation genre
+        is_anime = bool(meta.get("anime")) or bool(meta.get("mal_id"))
+        genres = str(meta.get("genres", "")).lower()
+        is_animation = is_anime or "animation" in genres
+
+        if meta.get("category") == "TV":
+            if is_animation:
+                return ("Séries", "Mangas-Animes")
+            is_emission = any(g in genres for g in ("reality", "talk", "game show", "news"))
+            if is_emission:
+                return ("Séries", "Emission TV")
+            return ("Séries", "Séries TV")
+
+        # Movie
+        if is_animation:
+            return ("Films", "Films d'animation")
+        return ("Films", "Films")
+
+    # ──────────────────────────────────────────────────────────
+    #  Tags  (comma-separated string inferred from release)
+    #
+    #  Matches the ntt-torr9up.nu autotag logic:
+    #    quality, source, HDR/DV, video codec, language
+    # ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _build_tags(meta: Meta, language_tag: str) -> str:
+        """Build comma-separated tags string for Torr9.
+
+        Mirrors the ntt script's infer_tags_from_name logic:
+          quality (2160p, 1080p, 720p)
+          source (REMUX, BluRay, WEB-DL, WEBRip, WEB)
+          HDR/DV (HDR10Plus, DV, HDR)
+          video codec (AV1, x265, x264)
+          language (TRUEFRENCH, MULTi, VOSTFR, VOF, VFF, VFQ, VFI, VF2)
+        """
+        tags: list[str] = []
+
+        # Quality / Resolution
+        res = meta.get("resolution", "")
+        if "2160" in res:
+            tags.append("2160p")
+        elif "1080" in res:
+            tags.append("1080p")
+        elif "720" in res:
+            tags.append("720p")
+
+        # Source
+        type_val = meta.get("type", "").upper()
+        source = meta.get("source", "")
+
+        if type_val == "REMUX":
+            tags.append("REMUX")
+        if source in ("BluRay",) or type_val == "DISC":
+            tags.append("BluRay")
+        if type_val == "WEBDL":
+            tags.append("WEB-DL")
+        elif type_val == "WEBRIP":
+            tags.append("WEBRip")
+        elif type_val == "HDTV":
+            tags.append("HDTV")
+
+        # HDR / DV
+        hdr = meta.get("hdr", "")
+        if "HDR10+" in hdr or "HDR10Plus" in hdr:
+            tags.append("HDR10Plus")
+        elif "HDR" in hdr:
+            tags.append("HDR")
+
+        if meta.get("dv", "") or "DV" in str(meta.get("hdr", "")):
+            tags.append("DV")
+
+        # Video codec
+        codec = meta.get("video_codec", "") or meta.get("video_encode", "")
+        codec_upper = codec.upper().replace(".", "").replace("-", "")
+        if "AV1" in codec_upper:
+            tags.append("AV1")
+        elif "X265" in codec_upper or "H265" in codec_upper or "HEVC" in codec_upper:
+            tags.append("x265")
+        elif "X264" in codec_upper or "H264" in codec_upper or "AVC" in codec_upper:
+            tags.append("x264")
+
+        # Language
+        if language_tag:
+            # Normalize MULTI.VFF → MULTi
+            if language_tag.startswith("MULTI"):
+                tags.append("MULTi")
+                # Also add the specific variant (VFF, VOF, etc.)
+                parts = language_tag.split(".")
+                if len(parts) > 1:
+                    tags.append(parts[1])
+            else:
+                tags.append(language_tag)
+
+        return ", ".join(tags)
+
+    # ──────────────────────────────────────────────────────────
+    #  Description builder  (BBCode) — matches Torr9 site template
+    # ──────────────────────────────────────────────────────────
+
+    async def _build_description(self, meta: Meta) -> str:
+        """Delegate to C411's description builder then replace C411 uploader URLs with TORR9 ones."""
+        from src.trackers.C411 import C411  # late import to avoid circular dependency
+        import re as _re
+        c411 = C411(config=self.config)
+        desc = await c411._build_description(meta)
+        # Replace c411.org uploader search URLs with TORR9 equivalent
+        desc = _re.sub(
+            r"https://c411\.org/torrents\?uploader=[^\"'\]]+",
+            "https://torr9.net/search?uploader=thesyndicate",
+            desc,
+        )
+        return desc
+
+    async def _get_mediainfo_text(self, meta: Meta) -> str:
+        """Read MediaInfo text from temp files."""
+        base = os.path.join(meta.get("base_dir", ""), "tmp", meta.get("uuid", ""))
+
+        for fname in ("MEDIAINFO_CLEANPATH.txt", "MEDIAINFO.txt"):
+            fpath = os.path.join(base, fname)
+            if os.path.exists(fpath):
+                async with aiofiles.open(fpath, encoding="utf-8") as f:
+                    content = await f.read()
+                    if content.strip():
+                        return content
+
+        if meta.get("bdinfo") is not None:
+            bd_path = os.path.join(base, "BD_SUMMARY_00.txt")
+            if os.path.exists(bd_path):
+                async with aiofiles.open(bd_path, encoding="utf-8") as f:
+                    return await f.read()
+
+        # Fallback: use in-memory mediainfo from prep
+        fallback = str(meta.get("mediainfo_text") or "").strip()
+        if fallback:
+            return fallback
+
+        return ""
+
+    @staticmethod
+    def _patch_mi_filename(mi_text: str, new_name: str) -> str:
+        """Replace the 'Complete name' value in MediaInfo text with *new_name*.
+
+        TORR9 displays the NFO on the torrent page.  The original filename
+        inside MediaInfo may differ from the tracker release name (language
+        tags, edition formatting, etc.), so we patch it to match.
+        """
+        if not mi_text or not new_name:
+            return mi_text
+
+        def _replace_complete_name(match: re.Match[str]) -> str:
+            prefix = match.group(1)  # "Complete name    : "
+            old_value = match.group(2)
+            ext_match = re.search(r"(\.[a-zA-Z0-9]{2,4})$", old_value)
+            ext = ext_match.group(1) if ext_match else ""
+            return f"{prefix}{new_name}{ext}"
+
+        return re.sub(
+            r"^(Complete name\s*:\s*)(.+)$",
+            _replace_complete_name,
+            mi_text,
+            count=1,
+            flags=re.MULTILINE,
+        )
+
+    @staticmethod
+    def _format_french_date(date_str: str) -> str:
+        """Format YYYY-MM-DD to French full date, e.g. '24 octobre 2011'."""
+        try:
+            dt = datetime.strptime(date_str, "%Y-%m-%d")
+            day_str = "1er" if dt.day == 1 else str(dt.day)
+            return f"{day_str} {FRENCH_MONTHS[dt.month]} {dt.year}"
+        except (ValueError, IndexError):
+            return date_str
+
+    # ──────────────────────────────────────────────────────────
+    #  NFO file
+    # ──────────────────────────────────────────────────────────
+
+    async def _get_or_generate_nfo(self, meta: Meta) -> Union[str, None]:
+        """Generate a C411-style NFO for the upload."""
+        from src.trackers.C411 import C411  # late import to avoid circular dependency
+        c411 = C411(config=self.config)
+        nfo_content = await c411._generate_c411_nfo(meta)
+        if not nfo_content:
+            return None
+        output_dir = os.path.join(meta["base_dir"], "tmp", meta["uuid"])
+        os.makedirs(output_dir, exist_ok=True)
+        nfo_path = os.path.join(output_dir, f"{meta.get('uuid', 'release')}.nfo")
+        async with aiofiles.open(nfo_path, "w", encoding="utf-8") as f:
+            await f.write(nfo_content)
+        return nfo_path
+
+    # ──────────────────────────────────────────────────────────
+    #  Upload
+    # ──────────────────────────────────────────────────────────
+
+    async def upload(self, meta: Meta, _disctype: str) -> bool:
+        """Upload torrent to torr9.net.
+
+        POST https://api.torr9.net/api/v1/torrents/upload
+          Authorization: Bearer <api_key>
+          Content-Type:  multipart/form-data
+
+        File fields:   torrent_file
+        Data fields:   title, description, nfo (plain-text), category, subcategory
+        Optional data: tags, is_exclusive, is_anonymous
+        """
+        common = COMMON(config=self.config)
+        await common.create_torrent_for_upload(meta, self.tracker, self.source_flag)
+
+        # ── Build release name ──
+        name_result = await self.get_name(meta)
+        title = name_result.get("name", "") if isinstance(name_result, dict) else str(name_result)
+
+        # ── Language tag (for tags) ──
+        language_tag = await self._build_audio_string(meta)
+
+        # ── Read torrent file ──
+        torrent_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/[{self.tracker}].torrent"
+        async with aiofiles.open(torrent_path, "rb") as f:
+            torrent_bytes = await f.read()
+
+        # ── NFO file ──
+        nfo_path = await self._get_or_generate_nfo(meta)
+        nfo_bytes = b""
+        if nfo_path and os.path.exists(nfo_path):
+            async with aiofiles.open(nfo_path, "rb") as f:
+                nfo_bytes = await f.read()
+            # Patch "Complete name" in NFO to match the tracker release name
+            if title and nfo_bytes:
+                try:
+                    nfo_text = nfo_bytes.decode("utf-8", errors="replace")
+                    nfo_text = self._patch_mi_filename(nfo_text, title)
+                    nfo_bytes = nfo_text.encode("utf-8")
+                except Exception:
+                    pass  # If patching fails, upload unpatched NFO
+        else:
+            console.print("[yellow]TORR9: No NFO available — upload may be rejected[/yellow]")
+
+        # ── Description (BBCode) ──
+        description = await self._build_description(meta)
+
+        # ── Category / Subcategory (exact strings from site form) ──
+        category, subcategory = self._get_category(meta)
+
+        # ── Tags (comma-separated) ──
+        tags = self._build_tags(meta, language_tag)
+
+        # ── Anonymous flag ──
+        anon = meta.get("anon", False) or self.config["TRACKERS"].get(self.tracker, {}).get("anon", False)
+
+        # ── Multipart form ──
+        # TORR9 expects the torrent as a file upload and the NFO as a
+        # plain-text data field (NOT a file upload).  C411 uses a file
+        # upload for its NFO — the two APIs differ here.
+        files: dict[str, tuple[str, bytes, str]] = {
+            "torrent_file": (f"{title}.torrent", torrent_bytes, "application/x-bittorrent"),
+        }
+
+        data: dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "nfo": nfo_bytes.decode("utf-8", errors="replace") if nfo_bytes else "",
+            "category": category,
+            "subcategory": subcategory,
+            "tags": tags,
+            "is_exclusive": "false",
+            "is_anonymous": str(anon).lower(),
+        }
+
+        token = await self._get_token()
+        if not token:
+            console.print("[red]TORR9: No authentication available (set username/password or api_key).[/red]")
+            meta["tracker_status"][self.tracker]["status_message"] = "No authentication configured"
+            return False
+
+        headers: dict[str, str] = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "*/*",
+            "Origin": "https://torr9.net",
+            "Referer": "https://torr9.net",
+        }
+
+        try:
+            if not meta["debug"]:
+                max_retries = 2
+                retry_delay = 5
+                timeout = 40.0
+
+                for attempt in range(max_retries):
+                    try:
+                        async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+                            response = await client.post(
+                                url=self.upload_url,
+                                files=files,
+                                data=data,
+                                headers=headers,
+                            )
+
+                        if response.status_code in (200, 201):
+                            try:
+                                response_data = response.json()
+
+                                if isinstance(response_data, dict) and response_data.get("error"):
+                                    error_msg = response_data.get("error", "Unknown error")
+                                    meta["tracker_status"][self.tracker]["status_message"] = f"API error: {error_msg}"
+                                    console.print(f"[yellow]TORR9 upload failed: {error_msg}[/yellow]")
+                                    return False
+
+                                # Extract torrent_id from response
+                                torrent_id = None
+                                if isinstance(response_data, dict):
+                                    torrent_id = response_data.get("torrent_id") or response_data.get("id") or response_data.get("slug")
+                                if torrent_id:
+                                    meta["tracker_status"][self.tracker]["torrent_id"] = torrent_id
+                                meta["tracker_status"][self.tracker]["status_message"] = response_data
+
+                                # Download the tracker-generated torrent file
+                                # (the site may randomise the infohash, so
+                                #  the locally-created .torrent is invalid)
+                                await self._save_tracker_torrent(
+                                    response_data,
+                                    torrent_path,
+                                    headers,
+                                )
+
+                                return True
+                            except json.JSONDecodeError:
+                                meta["tracker_status"][self.tracker]["status_message"] = "data error: TORR9 JSON decode error"
+                                return False
+
+                        elif response.status_code in (400, 401, 403, 404, 422):
+                            error_detail: Any = ""
+                            try:
+                                error_detail = response.json()
+                            except Exception:
+                                error_detail = response.text[:500]
+                            meta["tracker_status"][self.tracker]["status_message"] = {
+                                "error": f"HTTP {response.status_code}",
+                                "detail": error_detail,
+                            }
+                            console.print(f"[red]TORR9 upload failed: HTTP {response.status_code}[/red]")
+                            if error_detail:
+                                console.print(f"[dim]{error_detail}[/dim]")
+                            return False
+
+                        else:
+                            if attempt < max_retries - 1:
+                                console.print(f"[yellow]TORR9: HTTP {response.status_code}, retrying in {retry_delay}s… (attempt {attempt + 1}/{max_retries})[/yellow]")
+                                await asyncio.sleep(retry_delay)
+                                continue
+                            error_detail = ""
+                            try:
+                                error_detail = response.json()
+                            except Exception:
+                                error_detail = response.text[:500]
+                            meta["tracker_status"][self.tracker]["status_message"] = {
+                                "error": f"HTTP {response.status_code}",
+                                "detail": error_detail,
+                            }
+                            console.print(f"[red]TORR9 upload failed after {max_retries} attempts: HTTP {response.status_code}[/red]")
+                            if error_detail:
+                                console.print(f"[dim]{error_detail}[/dim]")
+                            return False
+
+                    except httpx.TimeoutException:
+                        if attempt < max_retries - 1:
+                            timeout = timeout * 1.5
+                            console.print(f"[yellow]TORR9: timeout, retrying in {retry_delay}s with {timeout:.0f}s timeout… (attempt {attempt + 1}/{max_retries})[/yellow]")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        meta["tracker_status"][self.tracker]["status_message"] = "data error: Request timed out after multiple attempts"
+                        return False
+
+                    except httpx.RequestError as e:
+                        if attempt < max_retries - 1:
+                            console.print(f"[yellow]TORR9: request error, retrying in {retry_delay}s… (attempt {attempt + 1}/{max_retries})[/yellow]")
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        meta["tracker_status"][self.tracker]["status_message"] = f"data error: Upload failed: {e}"
+                        console.print(f"[red]TORR9 upload error: {e}[/red]")
+                        return False
+
+                return False  # exhausted retries
+
+            else:
+                # ── Debug mode ──
+                desc_path = f"{meta['base_dir']}/tmp/{meta['uuid']}/[{self.tracker}]DESCRIPTION.txt"
+                async with aiofiles.open(desc_path, "w", encoding="utf-8") as f:
+                    await f.write(description)
+                console.print(f"DEBUG: Saving final description to {desc_path}")
+                console.print("[cyan]TORR9 Debug — Request data:[/cyan]")
+                console.print(f"  Title:       {title}")
+                console.print(f"  Category:    {category} / Sub: {subcategory}")
+                console.print(f"  Tags:        {tags}")
+                console.print(f"  Anonymous:   {anon}")
+                console.print(f"  Description: {description[:500]}…")
+                meta["tracker_status"][self.tracker]["status_message"] = "Debug mode, not uploaded."
+                await common.create_torrent_for_upload(
+                    meta,
+                    f"{self.tracker}_DEBUG",
+                    f"{self.tracker}_DEBUG",
+                    announce_url="https://fake.tracker",
+                )
+                return True
+
+        except Exception as e:
+            meta["tracker_status"][self.tracker]["status_message"] = f"data error: Upload failed: {e}"
+            console.print(f"[red]TORR9 upload error: {e}[/red]")
+            return False
+
+    # ──────────────────────────────────────────────────────────
+    #  Download tracker-generated torrent
+    # ──────────────────────────────────────────────────────────
+
+    async def _save_tracker_torrent(
+        self,
+        response_data: dict[str, Any],
+        torrent_path: str,
+        headers: dict[str, str],
+    ) -> None:
+        """Replace the local .torrent with the tracker-generated one.
+
+        TORR9 may randomise the infohash server-side, so the locally
+        created torrent file is no longer valid for client injection.
+
+        Strategy (mirrors the reference *ntt-torr9up* script):
+        1. Try base64-decoding ``response_data['torrent_file']``.
+        2. Fall back to downloading from ``response_data['download_url']``.
+        """
+        saved = False
+
+        # ── 1. base64-encoded torrent in the response ────────
+        b64 = response_data.get("torrent_file") or ""
+        if b64:
+            try:
+                raw = b64.strip()
+                # Pad to a multiple of 4 if necessary
+                pad = len(raw) % 4
+                if pad:
+                    raw += "=" * (4 - pad)
+                torrent_bytes = base64.b64decode(raw)
+                async with aiofiles.open(torrent_path, "wb") as f:
+                    await f.write(torrent_bytes)
+                saved = True
+            except Exception as e:
+                console.print(f"[yellow]TORR9: base64 torrent decode failed: {e}[/yellow]")
+
+        # ── 2. Fallback: download from URL ───────────────────
+        if not saved:
+            download_url = response_data.get("download_url") or ""
+            if download_url:
+                # Make absolute if the API returns a relative path
+                if download_url.startswith("/"):
+                    download_url = f"https://api.torr9.net{download_url}"
+                try:
+                    async with (
+                        httpx.AsyncClient(
+                            headers=headers,
+                            timeout=30.0,
+                            follow_redirects=True,
+                        ) as client,
+                        client.stream("GET", download_url) as r,
+                    ):
+                        r.raise_for_status()
+                        async with aiofiles.open(torrent_path, "wb") as f:
+                            async for chunk in r.aiter_bytes():
+                                await f.write(chunk)
+                    saved = True
+                except Exception as e:
+                    console.print(f"[yellow]TORR9: torrent download failed: {e}[/yellow]")
+
+        if not saved:
+            console.print("[yellow]TORR9: could not obtain tracker torrent — client injection may use a stale infohash.[/yellow]")
+
+    # ──────────────────────────────────────────────────────────
+    #  Dupe search
+    # ──────────────────────────────────────────────────────────
+
+    async def search_existing(self, meta: Meta, _: Any = None) -> list[dict[str, Any]]:
+        """Search for existing torrents on Torr9.
+
+        Uses the dedicated ``/api/v1/torrents/search?q=…`` endpoint which
+        performs a title-based search.
+
+        TORR9 releases may be listed under the French *or* the English title,
+        so we **always** search both (when they differ) and merge the results.
+        The original title is searched first; the other serves as complement.
+        """
+        dupes: list[dict[str, Any]] = []
+
+        token = await self._get_token()
+        if not token:
+            console.print("[yellow]TORR9: No authentication configured, skipping dupe check.[/yellow]")
+            return []
+
+        title = meta.get("title", "")
+        # Ensure French title is resolved (may not be populated yet at dupe-check time)
+        fr_title = meta.get("frtitle", "")
+        if not fr_title:
+            fr_title = await self._get_french_title(meta)
+        year = meta.get("year", "")
+
+        # Normalize for relevance filtering
+        def _normalize(s: str) -> str:
+            return re.sub(r"[^a-z0-9]", "", unidecode(s).lower())
+
+        def _normalize_tokens(s: str) -> set[str]:
+            """Split into individual normalized tokens for boundary-aware matching.
+
+            Unlike _normalize (which collapses everything into one string),
+            this preserves token boundaries so that e.g. the title "65" does
+            not spuriously match "x265" inside a codec tag.
+            """
+            parts = re.split(r"[^a-z0-9]+", unidecode(s).lower())
+            return {p for p in parts if p}
+
+        # Build the list of search queries — original-language title first
+        search_queries: list[str] = []
+        is_original_french = str(meta.get("original_language", "")).lower() == "fr"
+
+        if is_original_french:
+            # Original is French → search FR first, then EN as complement
+            if fr_title:
+                search_queries.append(f"{fr_title} {year}".strip())
+            if title and _normalize(title) != _normalize(fr_title or ""):
+                search_queries.append(f"{title} {year}".strip())
+        else:
+            # Original is not French → search EN first, then FR as complement
+            if title:
+                search_queries.append(f"{title} {year}".strip())
+            if fr_title and _normalize(fr_title) != _normalize(title or ""):
+                search_queries.append(f"{fr_title} {year}".strip())
+
+        if not search_queries:
+            return []
+
+        title_norm = _normalize(title)
+        fr_title_norm = _normalize(fr_title) if fr_title else ""
+        title_tokens = _normalize_tokens(title)
+        fr_title_tokens = _normalize_tokens(fr_title) if fr_title else set()
+        year_str = str(year).strip()
+        seen_names: set[str] = set()
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+            }
+
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                for search_term in search_queries:
+                    try:
+                        response = await client.get(
+                            "https://api.torr9.net/api/v1/torrents/search",
+                            headers=headers,
+                            params={"q": search_term},
+                        )
+                    except Exception:  # noqa: BLE001
+                        continue  # nosec B112 — skip failed search queries gracefully
+
+                    if response.status_code != 200:
+                        if meta.get("debug"):
+                            console.print(f"[yellow]TORR9 search returned HTTP {response.status_code} for '{search_term}'[/yellow]")
+                        continue
+
+                    try:
+                        data = response.json()
+                    except json.JSONDecodeError:
+                        continue
+
+                    items = data.get("torrents", data.get("data", []))
+                    if not items:
+                        continue
+
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        name = item.get("title", item.get("name", ""))
+                        if not name:
+                            continue
+
+                        # De-duplicate across queries
+                        name_norm = _normalize(name)
+                        if name_norm in seen_names:
+                            continue
+
+                        # Filter: the result must contain the title (EN or FR) AND year to be relevant.
+                        # Token-based matching: every token of the title must appear as an isolated
+                        # token in the candidate name to avoid false positives like "65" matching
+                        # the codec tag "x265".
+                        name_tokens = _normalize_tokens(name)
+                        title_match = bool(title_tokens) and title_tokens.issubset(name_tokens)
+                        fr_title_match = bool(fr_title_tokens) and fr_title_tokens.issubset(name_tokens)
+                        if not title_match and not fr_title_match:
+                            if meta.get("debug"):
+                                console.print(f"[dim]TORR9 dupe skip (title mismatch): {name}[/dim]")
+                            continue
+                        if year_str and year_str not in name:
+                            if meta.get("debug"):
+                                console.print(f"[dim]TORR9 dupe skip (year mismatch): {name}[/dim]")
+                            continue
+
+                        seen_names.add(name_norm)
+                        dupes.append(
+                            {
+                                "name": name,
+                                "size": item.get("size", item.get("file_size_bytes")),
+                                "link": (
+                                    item.get("url")
+                                    or item.get("link")
+                                    or (f"{self.torrent_url}{item['slug']}" if item.get("slug") else None)
+                                    or (f"{self.torrent_url}{item['id']}" if item.get("id") else None)
+                                ),
+                                "id": item.get("id", item.get("torrent_id")),
+                            }
+                        )
+
+        except Exception as e:
+            if meta.get("debug"):
+                console.print(f"[yellow]TORR9 search error: {e}[/yellow]")
+
+        if meta.get("debug"):
+            console.print(f"[cyan]TORR9 dupe search found {len(dupes)} result(s)[/cyan]")
+
+        return await self._check_french_lang_dupes(dupes, meta)
+
+    async def edit_desc(self, _meta: Meta) -> None:
+        """No-op — TORR9 descriptions are built in upload()."""
+        return

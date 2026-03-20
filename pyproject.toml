@@ -1,0 +1,50 @@
+[tool.ruff]
+line-length = 176
+target-version = "py39"
+exclude = ["tests", "data"]
+
+[tool.ruff.lint]
+select = [
+  # Core correctness
+  "E",
+  "F",
+  "W",
+  "B",
+
+  # Imports & modernization
+  "I",
+  "UP",
+
+  # Code quality
+  "C4",
+  "SIM",
+  "PERF",
+  "ARG",
+
+  # Dates & time
+  "DTZ",
+
+  # Async (if applicable)
+  "ASYNC",
+]
+ignore = [
+  "E501",      # line too long — managed by formatter
+  "UP045",     # existing suppression
+  "ASYNC240",  # os.path in async — pervasive in codebase, low risk
+  "ASYNC250",  # pathlib in async — same rationale
+  "ARG002",    # unused method args — required by abstract interface signatures
+  "DTZ007",    # naive datetime — intentional for display-only date formatting
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cogs", "data", "src", "web_ui"]
+section-order = ["future", "standard-library", "third-party", "first-party", "local-folder"]
+
+[tool.pyright]
+pythonVersion = "3.9"
+typeCheckingMode = "strict"
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnknownMemberType = true
+reportUnknownVariableType = true
+exclude = ["data", "**/node_modules", "**/__pycache__", "**/.*", "venv"]

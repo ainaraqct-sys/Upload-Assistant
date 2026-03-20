@@ -1,0 +1,32 @@
+.claude/
+data/banned/*.*
+data/config.json
+data/config.py
+data/config*
+data/cookies/
+data/tags.json
+data/tvdb/
+data/web_ui/*.*
+data/web_ui/templates/*.html
+data/web_ui/static/js/*.js
+data/web_ui/*.py
+# docker-compose.yml intentionally tracked as example compose file
+# Dockerfile intentionally tracked for GitHub Actions Docker build
+bin/mkbrr/*
+bin/bdinfo/*
+bin/MI/linux/*
+bin/MI/windows/*
+*.mkv
+.vscode/
+__pycache__/
+tmp/*
+.wdm/
+.DS_Store
+user-args.json
+/.vs
+data/nfos/*
+data/*.json
+.venv/*
+venv/*
+.pyright
+web_ui/static/js/node_modules/
