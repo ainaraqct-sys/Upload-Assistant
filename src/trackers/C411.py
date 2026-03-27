@@ -776,6 +776,10 @@ class C411(FrenchTrackerMixin):
         C = "#3d85c6"   # couleur accent C411
         RED = "#cc0000"  # rouge bandeau
         SEP = f"[color={C}]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/color]"
+
+        def section_header(icon: str, title: str) -> str:
+            sep = f"[color={C}]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/color]"
+            return f"{sep}\n[center][b][font=Verdana][color={C}][size=16]{icon} {title}[/size][/color][/font][/b][/center]"
         parts: list[str] = []
 
         # ── Options de config ──
@@ -814,21 +818,196 @@ class C411(FrenchTrackerMixin):
             video_codec = f"{video_codec} ({raw_codec})"
         resolution = meta.get("resolution", "")
         hdr_dv = self._format_hdr_dv_bbcode(meta) or "SDR"
-        audio_lines = self._format_audio_bbcode(mi_text, meta)
-        sub_lines = self._format_subtitle_bbcode(mi_text, meta)
+
+        # ── Table de correspondance langue → (drapeau, nom français) ──
+        _LANG_MAP: dict[str, tuple[str, str]] = {
+            "fr": ("🇫🇷", "Français"), "fre": ("🇫🇷", "Français"), "fra": ("🇫🇷", "Français"), "french": ("🇫🇷", "Français"),
+            "en": ("🇺🇸", "Anglais"), "eng": ("🇺🇸", "Anglais"), "english": ("🇺🇸", "Anglais"),
+            "es": ("🇪🇸", "Espagnol"), "esp": ("🇪🇸", "Espagnol"), "spa": ("🇪🇸", "Espagnol"), "spanish": ("🇪🇸", "Espagnol"),
+            "de": ("🇩🇪", "Allemand"), "ger": ("🇩🇪", "Allemand"), "deu": ("🇩🇪", "Allemand"), "german": ("🇩🇪", "Allemand"),
+            "it": ("🇮🇹", "Italien"), "ita": ("🇮🇹", "Italien"), "italian": ("🇮🇹", "Italien"),
+            "pt": ("🇵🇹", "Portugais"), "por": ("🇵🇹", "Portugais"), "portuguese": ("🇵🇹", "Portugais"),
+            "ja": ("🇯🇵", "Japonais"), "jpn": ("🇯🇵", "Japonais"), "japanese": ("🇯🇵", "Japonais"),
+            "ko": ("🇰🇷", "Coréen"), "kor": ("🇰🇷", "Coréen"), "korean": ("🇰🇷", "Coréen"),
+            "zh": ("🇨🇳", "Chinois"), "chi": ("🇨🇳", "Chinois"), "zho": ("🇨🇳", "Chinois"), "chinese": ("🇨🇳", "Chinois"),
+            "ar": ("🇸🇦", "Arabe"), "ara": ("🇸🇦", "Arabe"), "arabic": ("🇸🇦", "Arabe"),
+            "ru": ("🇷🇺", "Russe"), "rus": ("🇷🇺", "Russe"), "russian": ("🇷🇺", "Russe"),
+            "nl": ("🇳🇱", "Néerlandais"), "nld": ("🇳🇱", "Néerlandais"), "dut": ("🇳🇱", "Néerlandais"), "dutch": ("🇳🇱", "Néerlandais"),
+            "pl": ("🇵🇱", "Polonais"), "pol": ("🇵🇱", "Polonais"), "polish": ("🇵🇱", "Polonais"),
+            "tr": ("🇹🇷", "Turc"), "tur": ("🇹🇷", "Turc"), "turkish": ("🇹🇷", "Turc"),
+            "sv": ("🇸🇪", "Suédois"), "swe": ("🇸🇪", "Suédois"), "swedish": ("🇸🇪", "Suédois"),
+            "no": ("🇳🇴", "Norvégien"), "nor": ("🇳🇴", "Norvégien"), "norwegian": ("🇳🇴", "Norvégien"),
+            "da": ("🇩🇰", "Danois"), "dan": ("🇩🇰", "Danois"), "danish": ("🇩🇰", "Danois"),
+            "fi": ("🇫🇮", "Finnois"), "fin": ("🇫🇮", "Finnois"), "finnish": ("🇫🇮", "Finnois"),
+            "el": ("🇬🇷", "Grec"), "ell": ("🇬🇷", "Grec"), "gre": ("🇬🇷", "Grec"), "greek": ("🇬🇷", "Grec"),
+            "he": ("🇮🇱", "Hébreu"), "heb": ("🇮🇱", "Hébreu"), "hebrew": ("🇮🇱", "Hébreu"),
+            "hi": ("🇮🇳", "Hindi"), "hin": ("🇮🇳", "Hindi"), "hindi": ("🇮🇳", "Hindi"),
+            "th": ("🇹🇭", "Thaï"), "tha": ("🇹🇭", "Thaï"), "thai": ("🇹🇭", "Thaï"),
+            "vi": ("🇻🇳", "Vietnamien"), "vie": ("🇻🇳", "Vietnamien"), "vietnamese": ("🇻🇳", "Vietnamien"),
+            "id": ("🇮🇩", "Indonésien"), "ind": ("🇮🇩", "Indonésien"), "indonesian": ("🇮🇩", "Indonésien"),
+            "cs": ("🇨🇿", "Tchèque"), "cze": ("🇨🇿", "Tchèque"), "ces": ("🇨🇿", "Tchèque"), "czech": ("🇨🇿", "Tchèque"),
+            "hu": ("🇭🇺", "Hongrois"), "hun": ("🇭🇺", "Hongrois"), "hungarian": ("🇭🇺", "Hongrois"),
+            "ro": ("🇷🇴", "Roumain"), "ron": ("🇷🇴", "Roumain"), "rum": ("🇷🇴", "Roumain"), "romanian": ("🇷🇴", "Roumain"),
+            "uk": ("🇺🇦", "Ukrainien"), "ukr": ("🇺🇦", "Ukrainien"), "ukrainian": ("🇺🇦", "Ukrainien"),
+        }
+
+        def _resolve_lang(lang_raw: str, lang_original: str) -> tuple[str, str]:
+            base = lang_raw.split("-")[0].strip()
+            if base in _LANG_MAP:
+                return _LANG_MAP[base]
+            for key, val in _LANG_MAP.items():
+                if key in base:
+                    return val
+            return ("🌐", lang_original.strip().title())
+
+        # ── Pistes audio ──
+        audio_lines = []
+        if mi_text:
+            raw_tracks = re.split(r"\n{2,}(?=Audio)", mi_text, flags=re.IGNORECASE)
+            default_found = False
+            for track in raw_tracks:
+                if not re.match(r"Audio(?: #\d+)?$", track.strip().splitlines()[0].strip(), re.IGNORECASE):
+                    continue
+                lang_match = re.search(r"Language\s*:\s*(.+)", track)
+                title_match = re.search(r"Title\s*:\s*(.+)", track)
+                codec_match = re.search(r"Format\s*:\s*(.+)", track)
+                codec_id_match = re.search(r"Codec ID\s*:\s*(.+)", track)
+                bitrate_match = re.search(r"Bit rate\s*:\s*(\d+\s*kb/s)", track)
+                channel_match = re.search(r"Channel\(s\)\s*:\s*(.+)", track)
+                default_match = re.search(r"Default\s*:\s*Yes", track)
+                if not lang_match:
+                    continue
+                lang_raw = lang_match.group(1).lower()
+                title_raw = title_match.group(1).lower() if title_match else ""
+                # LANGUE
+                flag, lang_name = _resolve_lang(lang_raw, lang_match.group(1))
+                if flag == "🇫🇷":
+                    # Cherche les variantes dans le titre de piste ET dans le nom de langue brut
+                    _fr_hint = f"{title_raw} {lang_raw}"
+                    if re.search(r"\b(ad|audiodesc|audio.?desc(ription)?|audio.?description|descriptive)\b", title_raw) or title_raw.strip() in ("ad", "[ad]", "(ad)"):
+                        lang_name += " Audio-Description"
+                    elif re.search(r"\bvff\b", _fr_hint):
+                        lang_name += " VFF"
+                    elif re.search(r"\bvfq\b", _fr_hint):
+                        lang_name += " VFQ"
+                    elif re.search(r"\bvfi\b", _fr_hint):
+                        lang_name += " VFi"
+                    elif re.search(r"\bvf2\b", _fr_hint):
+                        lang_name += " VF2"
+                    elif re.search(r"\bvof\b", _fr_hint):
+                        lang_name += " VOF"
+                # DEFAULT
+                default_str = ""
+                if default_match and not default_found:
+                    default_str = " (piste par défaut)"
+                    default_found = True
+                # CODEC
+                codec_raw = codec_match.group(1) if codec_match else ""
+                codec_id = codec_id_match.group(1) if codec_id_match else ""
+                track_lower = track.lower()
+                if "truehd" in track_lower:
+                    codec = "TRUEHD"
+                elif "dts-hd" in track_lower or "dts hd" in track_lower:
+                    codec = "DTS-HD MA"
+                elif "dts:x" in track_lower:
+                    codec = "DTS:X"
+                elif "e-ac-3" in codec_raw or "eac3" in codec_id.lower():
+                    codec = "DDP"
+                elif "ac-3" in codec_raw:
+                    codec = "DD"
+                elif "aac" in codec_raw.lower():
+                    codec = "AAC"
+                else:
+                    codec = codec_raw.upper()
+                # CHANNELS
+                channels = ""
+                if channel_match:
+                    raw = channel_match.group(1)
+                    num_match = re.search(r"(\d+)", raw)
+                    if num_match:
+                        ch = int(num_match.group(1))
+                        channels = {1: "1.0", 2: "2.0", 6: "5.1", 8: "7.1"}.get(ch, f"{ch}.0")
+                if "atmos" in track_lower:
+                    channels += " Atmos"
+                bitrate = bitrate_match.group(1) if bitrate_match else ""
+                codec_display = f"{codec} {channels}".strip()
+                line = f"{flag} {lang_name}{default_str} : {codec_display}"
+                if bitrate:
+                    line += f" @ {bitrate}"
+                audio_lines.append(line.strip())
+
+        # ── Pistes sous-titres ──
+        sub_lines = []
+        if mi_text:
+            raw_tracks = re.split(r"\n{2,}(?=Text)", mi_text, flags=re.IGNORECASE)
+            sub_default_found = False
+            for track in raw_tracks:
+                if not re.match(r"Text(?: #\d+)?$", track.strip().splitlines()[0].strip(), re.IGNORECASE):
+                    continue
+                lang_match = re.search(r"Language\s*:\s*(.+)", track)
+                title_match = re.search(r"Title\s*:\s*(.+)", track)
+                forced_match = re.search(r"Forced\s*:\s*Yes", track)
+                default_match = re.search(r"Default\s*:\s*Yes", track)
+                format_match = re.search(r"Format\s*:\s*(.+)", track)
+                codec_id_match = re.search(r"Codec ID\s*:\s*(.+)", track)
+                count_match = re.search(r"Count of elements\s*:\s*(\d+)", track)
+                if not lang_match:
+                    continue
+                lang_raw = lang_match.group(1).lower()
+                title_raw = title_match.group(1).lower() if title_match else ""
+                # LANGUE
+                flag, lang_name = _resolve_lang(lang_raw, lang_match.group(1))
+                # FORMAT
+                fmt_raw = (format_match.group(1) if format_match else "").lower()
+                codec_raw = (codec_id_match.group(1) if codec_id_match else "").lower()
+                if "vtt" in fmt_raw or "wvtt" in codec_raw:
+                    fmt = "WEBVTT"
+                elif "pgs" in fmt_raw:
+                    fmt = "PGS"
+                elif "ass" in fmt_raw or "ssa" in fmt_raw:
+                    fmt = "ASS"
+                else:
+                    fmt = "SRT"
+                # TAGS
+                is_forced = bool(forced_match) or "forced" in title_raw or "forcé" in title_raw
+                is_default = bool(default_match) and not sub_default_found
+                if is_default:
+                    sub_default_found = True
+                if "sdh" in title_raw or "malentendant" in title_raw:
+                    tag_label = "SDH"
+                elif is_forced:
+                    tag_label = "Forcés"
+                else:
+                    tag_label = "Complets"
+                # MENTION piste par défaut / forcée
+                mentions = []
+                if is_default and is_forced:
+                    mentions.append("piste par défaut et forcée")
+                elif is_default:
+                    mentions.append("piste par défaut")
+                elif is_forced:
+                    mentions.append("piste forcée")
+                mention_str = f" ({', '.join(mentions)})" if mentions else ""
+                # COUNT
+                count = f" ({count_match.group(1)} éléments)" if count_match else ""
+                sub_lines.append(f"{flag} {lang_name} {tag_label}{mention_str} : {fmt}{count}")
         type_label = self._get_type_label(meta)
         source = meta.get("source", "") or meta.get("type", "")
         service = meta.get("service", "")
         container_display = self._format_container(mi_text)
         vbr = ""
+        overall_bitrate = ""
         if mi_text:
             vbr_match = re.search(r"(?:^|\n)Bit rate\s*:\s*(.+?)\s*(?:\n|$)", mi_text)
             if vbr_match:
                 vbr = vbr_match.group(1).strip()
+            overall_match = re.search(r"Overall bit rate\s*:\s*(.+?)\s*(?:\n|$)", mi_text)
+            if overall_match:
+                overall_bitrate = overall_match.group(1).strip()
         size_str = self._get_total_size(meta, mi_text)
         file_count = self._count_files(meta)
         group = self._get_release_group(meta)
-        release_name = meta.get("uuid", "")
+        release_name = meta.get("uuid", "")        
 
         # ── Crédits TMDB ──
         credits = fr_data.get("credits", {})
@@ -872,28 +1051,13 @@ class C411(FrenchTrackerMixin):
             parts.append("")
 
         # ══════════════════════════════════════════════════════
-        #  2. Barre tech rapide  Vidéo · Audio · S-T
-        # ══════════════════════════════════════════════════════
-        tech_bar: list[str] = []
-        #if resolution or video_codec:
-        #    vbits = " · ".join(filter(None, [resolution, video_codec, hdr_dv]))
-        #    tech_bar.append(f"[b]Vidéo :[/b] {vbits}")
-        #if audio_lines:
-        #    tech_bar.append(f"[b]Audio :[/b] {audio_lines[0]}")
-        #if sub_lines:
-        #    tech_bar.append(f"[b]S-T :[/b] {sub_lines[0]}")
-        if tech_bar:
-            parts.append(f"[center]{' · '.join(tech_bar)}[/center]")
-            parts.append("")
-
-        # ══════════════════════════════════════════════════════
         #  3 + 4. Branding groupe + Titre + Affiche
         # ══════════════════════════════════════════════════════
-        parts.append("[center]")
+        parts.append("")
         if group_logo_url:
             parts.append(f"[img]{group_logo_url}[/img]")
         if group_name:
-            parts.append(f"[i][color={C}]{group_name}[/color] présente[/i]")
+            #parts.append(f"[img]https://i.ibb.co/Xkv96MkM/arkas-presente.png[/img]")
             parts.append("")
         parts.append(f"[b][font=Verdana][color={C}][size=28]{fr_title} ({year})[/size][/color][/font][/b]")
         if original_title and original_title != fr_title:
@@ -920,27 +1084,38 @@ class C411(FrenchTrackerMixin):
             parts.append(f" [color=#888888]|[/color] ".join(badges))
         parts.append("")
 
+        # ══════════════════════════════════════════════════════
+        #  2. Barre tech rapide  Vidéo · Audio · S-T
+        # ══════════════════════════════════════════════════════
+        tech_bar: list[str] = []
+        if resolution or video_codec:
+            vbits = " · ".join(filter(None, [resolution, video_codec, hdr_dv]))
+            tech_bar.append(f"[b]Vidéo :[/b] {vbits}")
+        if audio_lines:
+            tech_bar.append(f"[b]Audio :[/b] {audio_lines[0]}")
+        if sub_lines:
+            tech_bar.append(f"[b]S-T :[/b] {sub_lines[0]}")
+        if tech_bar:
+            parts.append(f"[center]{' · '.join(tech_bar)}[/center]")
+            parts.append("")
+
         if poster:
             parts.append(f"[img]{poster}[/img]")
-        parts.append("[/center]")
+        parts.append("")
         parts.append("")
 
         # ══════════════════════════════════════════════════════
         #  5. Synopsis
         # ══════════════════════════════════════════════════════
-        parts.append(SEP)
-        parts.append(f"[center][b][font=Verdana][color={C}][size=16]Synopsis[/size][/color][/font][/b][/center]")
-        parts.append(SEP)
-        synopsis = fr_overview or str(meta.get("overview", "")).strip() or "Aucun synopsis disponible."
+        parts.append(section_header("📝", "Synopsis"))
+        synopsis = fr_overview or str(meta.get("overview", "")).strip() or "Il sera disponible sous peu. Merci de votre patience."
         parts.append(f"[font=Verdana][size=14]{synopsis}[/size][/font]")
         parts.append("")
 
         # ══════════════════════════════════════════════════════
         #  6. Informations
         # ══════════════════════════════════════════════════════
-        parts.append(SEP)
-        parts.append(f"[center][b][font=Verdana][color={C}][size=16]Informations[/size][/color][/font][/b][/center]")
-        parts.append(SEP)
+        parts.append(section_header("ℹ️", "Informations sur le titre"))
 
         info_items: list[str] = []
 
@@ -1003,9 +1178,7 @@ class C411(FrenchTrackerMixin):
         # ══════════════════════════════════════════════════════
         cast_with_photos = [p for p in cast[:6] if isinstance(p, dict) and p.get("name") and p.get("profile_path")]
         if cast_with_photos:
-            parts.append(SEP)
-            parts.append(f"[center][b][font=Verdana][color={C}][size=16]Casting[/size][/color][/font][/b][/center]")
-            parts.append(SEP)
+            parts.append(section_header("🎭", "Casting"))
             parts.append("[center]")
             for person in cast_with_photos:
                 name = person.get("name", "")
@@ -1020,65 +1193,66 @@ class C411(FrenchTrackerMixin):
         # ══════════════════════════════════════════════════════
         #  8. Informations techniques
         # ══════════════════════════════════════════════════════
-        parts.append(SEP)
-        parts.append(f"[center][b][font=Verdana][color={C}][size=16]Informations techniques[/size][/color][/font][/b][/center]")
-        parts.append(SEP)
-
+        parts.append(section_header("⚙️", "Détails techniques"))
         # — Vidéo —
         vid_items: list[str] = []
         if type_label:
-            vid_items.append(f"[b][color={C}]Type :[/color][/b] {type_label}")
+            vid_items.append(f"🎬 [b][color={C}]Type :[/color][/b] {type_label}")
         if source:
-            vid_items.append(f"[b][color={C}]Source :[/color][/b] {source}")
+            vid_items.append(f"📡 [b][color={C}]Source :[/color][/b] {source}")
         if service:
-            vid_items.append(f"[b][color={C}]Service :[/color][/b] {service}")
+            vid_items.append(f"🌐 [b][color={C}]Service :[/color][/b] {service}")
         if resolution:
-            vid_items.append(f"[b][color={C}]Résolution :[/color][/b] {resolution}")
+            vid_items.append(f"📺 [b][color={C}]Résolution :[/color][/b] {resolution}")
         if container_display:
-            vid_items.append(f"[b][color={C}]Format :[/color][/b] {container_display}")
+            vid_items.append(f"📦 [b][color={C}]Format :[/color][/b] {container_display}")
         if video_codec:
-            vid_items.append(f"[b][color={C}]Codec vidéo :[/color][/b] {video_codec}")
+            vid_items.append(f"⚙️ [b][color={C}]Codec :[/color][/b] {video_codec}")
         if hdr_dv:
-            vid_items.append(f"[b][color={C}]HDR :[/color][/b] {hdr_dv}")
-        if vbr:
-            vid_items.append(f"[b][color={C}]Débit vidéo :[/color][/b] {vbr}")
+            vid_items.append(f"🌈 [b][color={C}]HDR :[/color][/b] {hdr_dv}")
+        # — Vidéo —
         if vid_items:
-            parts.append(f"    [font=Verdana][size=14][b][color={C}]▶ Vidéo[/color][/b][/size][/font]")
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]🎬 Vidéo[/color][/b][/size][/font]")
             for item in vid_items:
                 parts.append(f"        [font=Verdana][size=14]{item}[/size][/font]")
             parts.append("")
 
         # — Audio —
         if audio_lines:
-            parts.append(f"    [font=Verdana][size=14][b][color={C}]♪ Audio[/color][/b][/size][/font]")
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]🔊 Audio[/color][/b][/size][/font]")
             for al in audio_lines:
-                parts.append(f"        [font=Verdana][size=14][i]{al}[/i][/size][/font]")
-            parts.append("")
+                parts.append(f"        [font=Verdana][size=14]{al}[/size][/font]")
+        else:
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]🔊 Audio[/color][/b][/size][/font]")
+            parts.append(f"        [font=Verdana][size=14][i]Aucun[/i][/size][/font]")
+        parts.append("")
 
         # — Sous-titres —
         if sub_lines:
-            parts.append(f"    [font=Verdana][size=14][b][color={C}]Ω Sous-titres[/color][/b][/size][/font]")
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]💬 Sous-titres[/color][/b][/size][/font]")
             for sl in sub_lines:
-                parts.append(f"        [font=Verdana][size=14][i]{sl}[/i][/size][/font]")
+                parts.append(f"        [font=Verdana][size=14]{sl}[/size][/font]")
         else:
-            parts.append(f"    [font=Verdana][size=14][b][color={C}]Ω Sous-titres[/color][/b][/size][/font]")
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]💬 Sous-titres[/color][/b][/size][/font]")
             parts.append(f"        [font=Verdana][size=14][i]Aucun[/i][/size][/font]")
         parts.append("")
 
         # ══════════════════════════════════════════════════════
         #  9. Release
         # ══════════════════════════════════════════════════════
-        parts.append(SEP)
-        parts.append(f"[center][b][font=Verdana][color={C}][size=16]Release[/size][/color][/font][/b][/center]")
-        parts.append(SEP)
+        parts.append(section_header("✨", "Information sur la release"))
         if release_name:
-            parts.append(f"    [font=Verdana][size=14][b][color={C}]Titre :[/color][/b] {release_name}[/size][/font]")
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]🎬 Titre :[/color][/b] {release_name}[/size][/font]")
         if size_str:
-            parts.append(f"    [font=Verdana][size=14][b][color={C}]Taille totale :[/color][/b] {size_str}[/size][/font]")
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]💾 Taille totale :[/color][/b] {size_str}[/size][/font]")
+        if overall_bitrate:
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]📶 Débit global :[/color][/b] {overall_bitrate}[/size][/font]")
+        if vbr:
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]� Débit vidéo :[/color][/b] {vbr}[/size][/font]")
         if file_count:
-            parts.append(f"    [font=Verdana][size=14][b][color={C}]Nombre de fichier(s) :[/color][/b] {file_count}[/size][/font]")
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]📂 Nombre de fichier(s) :[/color][/b] {file_count}[/size][/font]")
         if group:
-            parts.append(f"    [font=Verdana][size=14][b][color={C}]Groupe :[/color][/b] {group}[/size][/font]")
+            parts.append(f"    [font=Verdana][size=14][b][color={C}]👥 Groupe :[/color][/b] {group}[/size][/font]")
         parts.append("")
 
         # ══════════════════════════════════════════════════════
@@ -1087,9 +1261,7 @@ class C411(FrenchTrackerMixin):
         include_screens = tracker_cfg.get("include_screenshots", False)
         image_list: list[dict[str, Any]] = meta.get("image_list", []) if include_screens else []
         if image_list:
-            parts.append(SEP)
-            parts.append(f"[center][b][font=Verdana][color={C}][size=16]Captures d'écran[/size][/color][/font][/b][/center]")
-            parts.append(SEP)
+            parts.append(section_header("🖼️", "Captures d'écran"))
             parts.append("")
             img_lines: list[str] = []
             for img in image_list:
@@ -1098,18 +1270,17 @@ class C411(FrenchTrackerMixin):
                 if raw:
                     img_lines.append(f"[url={web}][img]{raw}[/img][/url]" if web else f"[img]{raw}[/img]")
             if img_lines:
-                parts.append("[center]")
+                parts.append("[spoiler= Capture d'écran][center]")
                 parts.append("\n".join(img_lines))
-                parts.append("[/center]")
+                parts.append("[/center][/spoiler]")
             parts.append("")
 
         # ══════════════════════════════════════════════════════
         #  11. Message personnalisé / Notes (optionnel)
         # ══════════════════════════════════════════════════════
         if custom_message:
-            parts.append(SEP)
-            parts.append(f"[center][b][font=Verdana][color={C}][size=16]Notes[/size][/color][/font][/b][/center]")
-            parts.append(SEP)
+            parts.append(section_header("📝", "Notes"))
+
             parts.append(f"[center][font=Verdana][size=14]{custom_message}[/size][/font][/center]")
             parts.append("")
 
@@ -1118,7 +1289,7 @@ class C411(FrenchTrackerMixin):
         # ══════════════════════════════════════════════════════
         if group_name or group_banner_url or group_quote:
             parts.append(SEP)
-            parts.append("")
+            #parts.append(f"[center][img]https://i.ibb.co/1tpNtJ79/notes.png[/img][/center]")
             sig_lines: list[str] = ["[center]"]
 
             if group_banner_url:
@@ -1129,18 +1300,19 @@ class C411(FrenchTrackerMixin):
                 sig_lines.append(f"[b][size=4]\"{group_quote}\"[/size][/b]")
                 sig_lines.append("")
 
-            sig_lines.append(f"[font=Verdana][size=14]En cas de problème de lecture, privilégiez le lecteur [url=https://mpv.io/installation/]mpv[/url].[/size][/font]")
-            sig_lines.append(f"[font=Verdana][size=14]Merci de rester en seed le plus longtemps possible pour maintenir en vie nos torrents.[/size][/font]")
+            sig_lines.append(f"[font=Verdana][size=14]Note: Si la lecture pose problème, privilégiez [url=https://www.videolan.org/vlc/]VLC Media Player[/url] pour un résultat optimal..[/size][/font]")
+            #sig_lines.append(f"[font=Verdana][size=14]En cas de problème de lecture, privilégiez le lecteur [url=https://mpv.io/installation/]mpv[/url].[/size][/font]")
+            #sig_lines.append(f"[font=Verdana][size=14]Chaque minute passée à seeder compte. Merci de laisser vos torrents actifs pour que tous puissent télécharger facilement et que la communauté reste forte et vivante.[/size][/font]")
             sig_lines.append("")
 
             if group_name:
                 uploader = group_name.replace(" ", "+")
                 category = meta.get("category", "").upper()
-                releases_url = f"https://c411.org/torrents?uploader={uploader}"
-                releases_label = "Retrouvez ici toutes nos releases"
-                sig_lines.append(f"[b][font=Verdana][size=14]🔗 Autres releases du groupe[/size][/font][/b]")
-                sig_lines.append(f"[font=Verdana][size=14]{releases_label} :[/size][/font]")
-                sig_lines.append(f"[url=https://c411.org/torrents?uploader={uploader}][font=Verdana][size=14]{group_name}[/size][/font][/url]")
+                #releases_url = f"https://c411.org/torrents?uploader=Arkas"
+                #releases_label = "Retrouvez ici toutes nos releases"
+                #sig_lines.append(f"[font=Verdana][size=14]{releases_label} :[/size][/font]")
+                #sig_lines.append(f"[url=https://c411.org/torrents?uploader=Arkas][font=Verdana][size=14]Arkas[/size][/font][/url]")
+                #sig_lines.append(f"[b][font=Verdana][size=14]🔗 Autres releases du groupe 🔗[/size][/font][/b]")
                 sig_lines.append("")
 
             sig_lines.append("[/center]")
