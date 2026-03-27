@@ -820,35 +820,38 @@ class C411(FrenchTrackerMixin):
         hdr_dv = self._format_hdr_dv_bbcode(meta) or "SDR"
 
         # ── Table de correspondance langue → (drapeau, nom français) ──
+        def _flag(code: str) -> str:
+            return f"[img]https://flagcdn.com/16x12/{code}.png[/img]"
+
         _LANG_MAP: dict[str, tuple[str, str]] = {
-            "fr": ("🇫🇷", "Français"), "fre": ("🇫🇷", "Français"), "fra": ("🇫🇷", "Français"), "french": ("🇫🇷", "Français"),
-            "en": ("🇺🇸", "Anglais"), "eng": ("🇺🇸", "Anglais"), "english": ("🇺🇸", "Anglais"),
-            "es": ("🇪🇸", "Espagnol"), "esp": ("🇪🇸", "Espagnol"), "spa": ("🇪🇸", "Espagnol"), "spanish": ("🇪🇸", "Espagnol"),
-            "de": ("🇩🇪", "Allemand"), "ger": ("🇩🇪", "Allemand"), "deu": ("🇩🇪", "Allemand"), "german": ("🇩🇪", "Allemand"),
-            "it": ("🇮🇹", "Italien"), "ita": ("🇮🇹", "Italien"), "italian": ("🇮🇹", "Italien"),
-            "pt": ("🇵🇹", "Portugais"), "por": ("🇵🇹", "Portugais"), "portuguese": ("🇵🇹", "Portugais"),
-            "ja": ("🇯🇵", "Japonais"), "jpn": ("🇯🇵", "Japonais"), "japanese": ("🇯🇵", "Japonais"),
-            "ko": ("🇰🇷", "Coréen"), "kor": ("🇰🇷", "Coréen"), "korean": ("🇰🇷", "Coréen"),
-            "zh": ("🇨🇳", "Chinois"), "chi": ("🇨🇳", "Chinois"), "zho": ("🇨🇳", "Chinois"), "chinese": ("🇨🇳", "Chinois"),
-            "ar": ("🇸🇦", "Arabe"), "ara": ("🇸🇦", "Arabe"), "arabic": ("🇸🇦", "Arabe"),
-            "ru": ("🇷🇺", "Russe"), "rus": ("🇷🇺", "Russe"), "russian": ("🇷🇺", "Russe"),
-            "nl": ("🇳🇱", "Néerlandais"), "nld": ("🇳🇱", "Néerlandais"), "dut": ("🇳🇱", "Néerlandais"), "dutch": ("🇳🇱", "Néerlandais"),
-            "pl": ("🇵🇱", "Polonais"), "pol": ("🇵🇱", "Polonais"), "polish": ("🇵🇱", "Polonais"),
-            "tr": ("🇹🇷", "Turc"), "tur": ("🇹🇷", "Turc"), "turkish": ("🇹🇷", "Turc"),
-            "sv": ("🇸🇪", "Suédois"), "swe": ("🇸🇪", "Suédois"), "swedish": ("🇸🇪", "Suédois"),
-            "no": ("🇳🇴", "Norvégien"), "nor": ("🇳🇴", "Norvégien"), "norwegian": ("🇳🇴", "Norvégien"),
-            "da": ("🇩🇰", "Danois"), "dan": ("🇩🇰", "Danois"), "danish": ("🇩🇰", "Danois"),
-            "fi": ("🇫🇮", "Finnois"), "fin": ("🇫🇮", "Finnois"), "finnish": ("🇫🇮", "Finnois"),
-            "el": ("🇬🇷", "Grec"), "ell": ("🇬🇷", "Grec"), "gre": ("🇬🇷", "Grec"), "greek": ("🇬🇷", "Grec"),
-            "he": ("🇮🇱", "Hébreu"), "heb": ("🇮🇱", "Hébreu"), "hebrew": ("🇮🇱", "Hébreu"),
-            "hi": ("🇮🇳", "Hindi"), "hin": ("🇮🇳", "Hindi"), "hindi": ("🇮🇳", "Hindi"),
-            "th": ("🇹🇭", "Thaï"), "tha": ("🇹🇭", "Thaï"), "thai": ("🇹🇭", "Thaï"),
-            "vi": ("🇻🇳", "Vietnamien"), "vie": ("🇻🇳", "Vietnamien"), "vietnamese": ("🇻🇳", "Vietnamien"),
-            "id": ("🇮🇩", "Indonésien"), "ind": ("🇮🇩", "Indonésien"), "indonesian": ("🇮🇩", "Indonésien"),
-            "cs": ("🇨🇿", "Tchèque"), "cze": ("🇨🇿", "Tchèque"), "ces": ("🇨🇿", "Tchèque"), "czech": ("🇨🇿", "Tchèque"),
-            "hu": ("🇭🇺", "Hongrois"), "hun": ("🇭🇺", "Hongrois"), "hungarian": ("🇭🇺", "Hongrois"),
-            "ro": ("🇷🇴", "Roumain"), "ron": ("🇷🇴", "Roumain"), "rum": ("🇷🇴", "Roumain"), "romanian": ("🇷🇴", "Roumain"),
-            "uk": ("🇺🇦", "Ukrainien"), "ukr": ("🇺🇦", "Ukrainien"), "ukrainian": ("🇺🇦", "Ukrainien"),
+            "fr": (_flag("fr"), "Français"), "fre": (_flag("fr"), "Français"), "fra": (_flag("fr"), "Français"), "french": (_flag("fr"), "Français"),
+            "en": (_flag("us"), "Anglais"), "eng": (_flag("us"), "Anglais"), "english": (_flag("us"), "Anglais"),
+            "es": (_flag("es"), "Espagnol"), "esp": (_flag("es"), "Espagnol"), "spa": (_flag("es"), "Espagnol"), "spanish": (_flag("es"), "Espagnol"),
+            "de": (_flag("de"), "Allemand"), "ger": (_flag("de"), "Allemand"), "deu": (_flag("de"), "Allemand"), "german": (_flag("de"), "Allemand"),
+            "it": (_flag("it"), "Italien"), "ita": (_flag("it"), "Italien"), "italian": (_flag("it"), "Italien"),
+            "pt": (_flag("pt"), "Portugais"), "por": (_flag("pt"), "Portugais"), "portuguese": (_flag("pt"), "Portugais"),
+            "ja": (_flag("jp"), "Japonais"), "jpn": (_flag("jp"), "Japonais"), "japanese": (_flag("jp"), "Japonais"),
+            "ko": (_flag("kr"), "Coréen"), "kor": (_flag("kr"), "Coréen"), "korean": (_flag("kr"), "Coréen"),
+            "zh": (_flag("cn"), "Chinois"), "chi": (_flag("cn"), "Chinois"), "zho": (_flag("cn"), "Chinois"), "chinese": (_flag("cn"), "Chinois"),
+            "ar": (_flag("sa"), "Arabe"), "ara": (_flag("sa"), "Arabe"), "arabic": (_flag("sa"), "Arabe"),
+            "ru": (_flag("ru"), "Russe"), "rus": (_flag("ru"), "Russe"), "russian": (_flag("ru"), "Russe"),
+            "nl": (_flag("nl"), "Néerlandais"), "nld": (_flag("nl"), "Néerlandais"), "dut": (_flag("nl"), "Néerlandais"), "dutch": (_flag("nl"), "Néerlandais"),
+            "pl": (_flag("pl"), "Polonais"), "pol": (_flag("pl"), "Polonais"), "polish": (_flag("pl"), "Polonais"),
+            "tr": (_flag("tr"), "Turc"), "tur": (_flag("tr"), "Turc"), "turkish": (_flag("tr"), "Turc"),
+            "sv": (_flag("se"), "Suédois"), "swe": (_flag("se"), "Suédois"), "swedish": (_flag("se"), "Suédois"),
+            "no": (_flag("no"), "Norvégien"), "nor": (_flag("no"), "Norvégien"), "norwegian": (_flag("no"), "Norvégien"),
+            "da": (_flag("dk"), "Danois"), "dan": (_flag("dk"), "Danois"), "danish": (_flag("dk"), "Danois"),
+            "fi": (_flag("fi"), "Finnois"), "fin": (_flag("fi"), "Finnois"), "finnish": (_flag("fi"), "Finnois"),
+            "el": (_flag("gr"), "Grec"), "ell": (_flag("gr"), "Grec"), "gre": (_flag("gr"), "Grec"), "greek": (_flag("gr"), "Grec"),
+            "he": (_flag("il"), "Hébreu"), "heb": (_flag("il"), "Hébreu"), "hebrew": (_flag("il"), "Hébreu"),
+            "hi": (_flag("in"), "Hindi"), "hin": (_flag("in"), "Hindi"), "hindi": (_flag("in"), "Hindi"),
+            "th": (_flag("th"), "Thaï"), "tha": (_flag("th"), "Thaï"), "thai": (_flag("th"), "Thaï"),
+            "vi": (_flag("vn"), "Vietnamien"), "vie": (_flag("vn"), "Vietnamien"), "vietnamese": (_flag("vn"), "Vietnamien"),
+            "id": (_flag("id"), "Indonésien"), "ind": (_flag("id"), "Indonésien"), "indonesian": (_flag("id"), "Indonésien"),
+            "cs": (_flag("cz"), "Tchèque"), "cze": (_flag("cz"), "Tchèque"), "ces": (_flag("cz"), "Tchèque"), "czech": (_flag("cz"), "Tchèque"),
+            "hu": (_flag("hu"), "Hongrois"), "hun": (_flag("hu"), "Hongrois"), "hungarian": (_flag("hu"), "Hongrois"),
+            "ro": (_flag("ro"), "Roumain"), "ron": (_flag("ro"), "Roumain"), "rum": (_flag("ro"), "Roumain"), "romanian": (_flag("ro"), "Roumain"),
+            "uk": (_flag("ua"), "Ukrainien"), "ukr": (_flag("ua"), "Ukrainien"), "ukrainian": (_flag("ua"), "Ukrainien"),
         }
 
         def _resolve_lang(lang_raw: str, lang_original: str) -> tuple[str, str]:
@@ -858,7 +861,7 @@ class C411(FrenchTrackerMixin):
             for key, val in _LANG_MAP.items():
                 if key in base:
                     return val
-            return ("🌐", lang_original.strip().title())
+            return (_flag("un"), lang_original.strip().title())
 
         # ── Pistes audio ──
         audio_lines = []
