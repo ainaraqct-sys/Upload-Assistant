@@ -146,7 +146,7 @@ Format :
 📶 Débit global : 5 297 kb/s
 📶 Débit vidéo : 3 817 kb/s
 📂 Nombre de fichier(s) : 1
-👥 Groupe : Slay3R
+👥 Groupe : GROUP-NAME
 ```
 
 ---
